@@ -262,12 +262,31 @@ test("a ROM truncated inside the header is rejected and does not create a ROM UR
 
 test("an oversized ROM header is rejected and does not create a ROM URL", () => {
   const limit = 32 * 1024 * 1024;
-  const atLimit = inspectGbaRom(romOfSize(limit), "limit.gba");
-  assert.equal(atLimit.ok, true);
-
   const { plan } = launchRefused(romOfSize(limit + 1), "huge.gba");
   assert.equal(plan.ok, false);
   assert.equal(plan.error, "This GBA ROM is larger than 32 MiB.");
+});
+
+test("a ROM of exactly 32 MiB is accepted by planLaunch", () => {
+  const limit = 32 * 1024 * 1024;
+  const session = createRomSession();
+  const generation = beginFileRead(session, "limit.gba");
+  const ready = finishFileRead(session, generation, romOfSize(limit));
+  assert.equal(ready.applied, true);
+  assert.equal(ready.ready, true);
+
+  let created = 0;
+  const plan = planLaunch(session, {
+    createObjectUrl(bytes) {
+      created += 1;
+      assert.equal(bytes.length, limit);
+      return "blob:limit";
+    },
+  });
+  assert.equal(plan.ok, true, plan.error);
+  assert.equal(created, 1);
+  assert.equal(plan.gameUrl, "blob:limit");
+  assert.match(plan.playerDocument, /blob:limit/);
 });
 
 test("the page no longer calls EJS_ready or the floating jsDelivr build", () => {

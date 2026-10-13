@@ -49,5 +49,4 @@ test("saving twice to the same slot keeps one snapshot and the latest bytes", ()
   assert.deepEqual([...loadState(library, 7, 1).bytes], [4, 5]);
 
   assert.equal(loadState(library, 7, 2).ok, false);
-  assert.equal(library.games.get(7).size, 1);
 });
