@@ -46,6 +46,27 @@ function launch(session, url) {
   });
 }
 
+function launchRefused(bytes, fileName) {
+  const session = createRomSession();
+  const generation = beginFileRead(session, fileName);
+  const ready = finishFileRead(session, generation, bytes);
+  const plan = planLaunch(session, {
+    createObjectUrl() {
+      throw new Error("should not create a URL");
+    },
+  });
+  return { ready, plan };
+}
+
+function romOfSize(size) {
+  const bytes = new Uint8Array(size);
+  writeAscii(bytes, 0xa0, "HUGE");
+  writeAscii(bytes, 0xac, "HUGE");
+  bytes[0xb2] = 0x96;
+  bytes[0xbd] = specChecksum(bytes);
+  return bytes;
+}
+
 test("header checksum matches the known TEST cartridge vector", () => {
   const bytes = new Uint8Array(0xc0);
   writeAscii(bytes, 0xa0, "TEST");
@@ -217,6 +238,36 @@ test("a filename that contains markup cannot break out of the player script", ()
   assert.equal(plan.ok, true);
   assert.equal(plan.gameName.includes("<"), false);
   assert.equal(plan.playerDocument.split("</script>").length - 1, 2);
+});
+
+test("an empty file is rejected and does not create a ROM URL", () => {
+  const { ready, plan } = launchRefused(new Uint8Array(0), "empty.gba");
+  assert.equal(ready.applied, true);
+  assert.equal(ready.ready, true);
+  assert.equal(plan.ok, false);
+  assert.equal(plan.error, "This file is too small to be a GBA ROM.");
+});
+
+test("a ROM truncated inside the header is rejected and does not create a ROM URL", () => {
+  // 0xB3 includes the required 0x96 byte. 0xBF stops one byte before the
+  // 192-byte header ends, so the checksum byte is missing.
+  for (const length of [1, 0xb3, 0xbf]) {
+    const bytes = new Uint8Array(length);
+    if (length > 0xb2) bytes[0xb2] = 0x96;
+    const { plan } = launchRefused(bytes, "truncated.gba");
+    assert.equal(plan.ok, false);
+    assert.equal(plan.error, "This file is too small to be a GBA ROM.");
+  }
+});
+
+test("an oversized ROM header is rejected and does not create a ROM URL", () => {
+  const limit = 32 * 1024 * 1024;
+  const atLimit = inspectGbaRom(romOfSize(limit), "limit.gba");
+  assert.equal(atLimit.ok, true);
+
+  const { plan } = launchRefused(romOfSize(limit + 1), "huge.gba");
+  assert.equal(plan.ok, false);
+  assert.equal(plan.error, "This GBA ROM is larger than 32 MiB.");
 });
 
 test("the page no longer calls EJS_ready or the floating jsDelivr build", () => {
