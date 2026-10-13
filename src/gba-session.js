@@ -1,3 +1,5 @@
+import { clearSessionStores, clearStorageFailure } from "./browser-storage.js";
+
 // Pure ROM-session helpers for the browser page.
 //
 // EmulatorJS reads EJS_gameUrl once, when loader.js runs. EJS_ready is a
@@ -52,10 +54,37 @@ export function finishFileRead(session, generation, bytes, error) {
     session.readError = "Could not read that file.";
     return { applied: true, ready: false, fileName };
   }
-  session.bytes = bytes;
+  // Own the bytes. A later truncate or detach of the caller's buffer must
+  // not change the ROM Play launches.
+  let copy;
+  try {
+    copy = new Uint8Array(bytes);
+  } catch {
+    session.bytes = null;
+    session.fileName = null;
+    session.readError = "Could not read that file.";
+    return { applied: true, ready: false, fileName };
+  }
+  session.bytes = copy;
   session.fileName = fileName;
   session.readError = null;
   return { applied: true, ready: true, fileName };
+}
+
+// Drop the in-memory ROM even when browser storage throws. The caller
+// revokes revokeUrl. A file read still in flight for this generation is ignored.
+export function teardownSession(session, deps = {}) {
+  const revokeUrl = session.activeUrl ?? null;
+  session.generation += 1;
+  session.pendingName = null;
+  session.fileName = null;
+  session.bytes = null;
+  session.activeUrl = null;
+  session.readError = null;
+
+  const errors = clearSessionStores(deps);
+  const storageError = errors.length ? clearStorageFailure(errors[0]) : null;
+  return { ok: storageError === null, revokeUrl, storageError };
 }
 
 export function gbaHeaderChecksum(bytes) {

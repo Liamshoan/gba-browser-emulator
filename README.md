@@ -18,4 +18,4 @@ Choose a `.gba` file and press Load & Play. The emulator starts inside a fresh f
 npm test
 ```
 
-That runs `node --test` on `test/gba-session.test.js`. No extra packages are required.
+That runs `node --test` on the files in `test/`. No extra packages are required.
