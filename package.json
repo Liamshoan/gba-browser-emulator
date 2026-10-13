@@ -1,0 +1,8 @@
+{
+  "name": "gba-browser-emulator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
