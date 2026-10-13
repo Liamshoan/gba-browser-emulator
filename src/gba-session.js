@@ -8,6 +8,8 @@
 export const EMULATOR_DATA_PATH = "https://cdn.emulatorjs.org/stable/data/";
 
 const HEADER_LENGTH = 0xc0;
+// Retail carts and the Game Pak ROM window both stop at 32 MiB.
+export const MAX_GBA_ROM_BYTES = 32 * 1024 * 1024;
 const TITLE_OFFSET = 0xa0;
 const TITLE_LENGTH = 12;
 const CODE_OFFSET = 0xac;
@@ -107,6 +109,9 @@ export function inspectGbaRom(bytes, fileName) {
   }
   if (!(bytes instanceof Uint8Array) || bytes.length < HEADER_LENGTH) {
     return { ok: false, error: "This file is too small to be a GBA ROM." };
+  }
+  if (bytes.length > MAX_GBA_ROM_BYTES) {
+    return { ok: false, error: "This GBA ROM is larger than 32 MiB." };
   }
   if (bytes[FIXED_OFFSET] !== FIXED_BYTE) {
     return {
