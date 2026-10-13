@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GBA Browser Emulator</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1rem;
+    }
+    h1 { margin-bottom: 0.5rem; }
+    .info { max-width: 600px; text-align: center; margin-bottom: 1rem; line-height: 1.5; }
+    #rom { margin: 0.5rem; }
+    button { padding: 0.5rem 1rem; background: #333; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #555; }
+    #game {
+      width: 100%;
+      max-width: 960px;
+      height: 60vh;
+      min-height: 400px;
+      background: #000;
+      border: 2px solid #333;
+      border-radius: 8px;
+    }
+    .controls { margin-top: 1rem; font-size: 0.9rem; opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <h1>GBA Emulator</h1>
+  <div class="info">
+    <p>Load a .gba ROM file (your own dump or free homebrew like Astrohawk Advance).</p>
+    <p>This uses EmulatorJS (mGBA core). Analysis with REA can be done on the binary separately.</p>
+  </div>
+  <input type="file" id="rom" accept=".gba">
+  <button id="start">Load & Play</button>
+  <div id="game"></div>
+  <div class="controls">
+    <p>Controls: Arrows = D-pad, Z = A, X = B, Enter = Start, Shift = Select, A = L, S = R</p>
+  </div>
+
+  <script type="module">
+    const fileInput = document.getElementById('rom');
+    const startBtn = document.getElementById('start');
+    let romBuffer = null;
+
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        romBuffer = await file.arrayBuffer();
+        startBtn.textContent = 'Play ' + file.name;
+      }
+    });
+
+    startBtn.addEventListener('click', async () => {
+      if (!romBuffer) {
+        alert('Please select a .gba file first');
+        return;
+      }
+
+      // EmulatorJS setup
+      window.EJS_player = '#game';
+      window.EJS_core = 'gba';
+      window.EJS_gameUrl = URL.createObjectURL(new Blob([romBuffer], {type: 'application/octet-stream'}));
+      window.EJS_pathtodata = 'https://cdn.jsdelivr.net/gh/EmulatorJS/EmulatorJS@latest/data/';
+
+      // Load EmulatorJS loader if not already present
+      if (!document.querySelector('script[src*="loader.js"]')) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/gh/EmulatorJS/EmulatorJS@latest/data/loader.js';
+        script.onload = () => {
+          if (window.EJS_ready) window.EJS_ready();
+        };
+        document.body.appendChild(script);
+      } else if (window.EJS_ready) {
+        window.EJS_ready();
+      }
+    });
+  </script>
+</body>
+</html>
