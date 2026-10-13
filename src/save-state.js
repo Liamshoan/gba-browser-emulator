@@ -1,8 +1,9 @@
 // In-memory save slots. EmulatorJS keeps the real snapshots in the player
 // frame; this library is the deterministic policy for slot load and for a
 // second save to a slot that already has a snapshot. commitSave also writes
-// one record through an injected storage object and rolls the slot back
-// when that write is truncated, full, or unavailable.
+// one record through an injected storage object. A truncated, full, or
+// unavailable write rolls the slot back and puts the previous stored
+// record back. Deleting that record would leave the slot empty.
 
 import {
   decodeSaveBytes,
@@ -86,6 +87,22 @@ function bestEffortRemove(storage, key) {
   }
 }
 
+// Put the record that was stored before this attempt back. Removing the key
+// instead drops that save when the new write was rejected or truncated.
+// A missing prior record is the one case where the failed write should go.
+function restorePriorSave(storage, key, priorRecord) {
+  if (typeof priorRecord === "string") {
+    try {
+      storage.setItem(key, priorRecord);
+    } catch {
+      // The prior record could not be written back. Deleting the key would
+      // leave nothing, so keep whatever the failed write still holds.
+    }
+    return;
+  }
+  if (priorRecord === null) bestEffortRemove(storage, key);
+}
+
 export function commitSave(library, gameId, slot, bytes, storage) {
   if (
     storage == null ||
@@ -101,16 +118,25 @@ export function commitSave(library, gameId, slot, bytes, storage) {
 
   const key = saveRecordKey(saved.gameId, saved.slot);
   const snapshot = loadState(library, saved.gameId, saved.slot).bytes;
+  let priorRecord;
+  try {
+    priorRecord = storage.getItem(key);
+  } catch (error) {
+    rollback(library, saved.gameId, saved.slot, previous);
+    return { ok: false, error: writeStorageFailure(error) };
+  }
+  if (priorRecord != null && typeof priorRecord !== "string") priorRecord = undefined;
+
   try {
     storage.setItem(key, encodeSaveBytes(snapshot));
     const decoded = decodeSaveBytes(storage.getItem(key));
     if (!decoded || !equalBytes(decoded, snapshot)) {
-      bestEffortRemove(storage, key);
+      restorePriorSave(storage, key, priorRecord);
       rollback(library, saved.gameId, saved.slot, previous);
       return { ok: false, error: "Save state did not roundtrip." };
     }
   } catch (error) {
-    bestEffortRemove(storage, key);
+    restorePriorSave(storage, key, priorRecord);
     rollback(library, saved.gameId, saved.slot, previous);
     return { ok: false, error: writeStorageFailure(error) };
   }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { decodeSaveBytes, encodeSaveBytes, saveRecordKey } from "../src/browser-storage.js";
 import { createSaveLibrary, loadState, saveState } from "../src/save-state.js";
 
 test("loading a save slot that has no snapshot fails", () => {
@@ -233,6 +234,66 @@ test("commitSave rejects a truncated stored snapshot and keeps the previous save
   assert.equal(result.error, "Save state did not roundtrip.");
   assert.deepEqual([...loadState(library, 4, 2).bytes], [8, 8]);
   assert.equal(map.size, 0);
+});
+
+test("a quota failure puts the previous stored save back", async () => {
+  const { commitSave } = await import("../src/save-state.js");
+  const library = createSaveLibrary();
+  const prior = new Uint8Array([1, 2, 3]);
+  assert.equal(saveState(library, 7, 1, prior).ok, true);
+  const key = saveRecordKey(7, 1);
+  const encoded = encodeSaveBytes(prior);
+  const map = new Map([[key, encoded]]);
+  const removed = [];
+  const result = commitSave(library, 7, 1, new Uint8Array([4, 5, 6, 7]), {
+    setItem(storageKey, value) {
+      if (value !== encoded) {
+        map.delete(storageKey);
+        throw quotaError();
+      }
+      map.set(storageKey, value);
+    },
+    getItem(storageKey) {
+      return map.has(storageKey) ? map.get(storageKey) : null;
+    },
+    removeItem(storageKey) {
+      removed.push(storageKey);
+      map.delete(storageKey);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "Could not store that save because storage is full.");
+  assert.deepEqual([...loadState(library, 7, 1).bytes], [1, 2, 3]);
+  assert.deepEqual(removed, []);
+  assert.deepEqual([...(decodeSaveBytes(map.get(key)) || [])], [1, 2, 3]);
+});
+
+test("a truncated write puts the previous stored save back", async () => {
+  const { commitSave } = await import("../src/save-state.js");
+  const library = createSaveLibrary();
+  const prior = new Uint8Array([8, 8]);
+  assert.equal(saveState(library, 4, 2, prior).ok, true);
+  const key = saveRecordKey(4, 2);
+  const encoded = encodeSaveBytes(prior);
+  const map = new Map([[key, encoded]]);
+  let writes = 0;
+  const result = commitSave(library, 4, 2, new Uint8Array([1, 2, 3, 4]), {
+    setItem(storageKey, value) {
+      writes += 1;
+      map.set(storageKey, writes === 1 ? String(value).slice(0, -1) : String(value));
+    },
+    getItem(storageKey) {
+      return map.has(storageKey) ? map.get(storageKey) : null;
+    },
+    removeItem(storageKey) {
+      map.delete(storageKey);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "Save state did not roundtrip.");
+  assert.equal(writes, 2);
+  assert.deepEqual([...loadState(library, 4, 2).bytes], [8, 8]);
+  assert.deepEqual([...(decodeSaveBytes(map.get(key)) || [])], [8, 8]);
 });
 
 test("commitSave does not store an empty snapshot", async () => {

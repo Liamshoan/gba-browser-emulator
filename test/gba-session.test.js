@@ -404,7 +404,7 @@ test("teardown clears the session and the active ROM URL", async () => {
   const session = playingSession();
   const removed = [];
   let deleted = null;
-  const result = teardownSession(session, {
+  const result = await teardownSession(session, {
     localStorage: {
       length: 2,
       key(index) {
@@ -438,7 +438,7 @@ test("teardown still clears the session when localStorage raises quota", async (
   const { teardownSession } = await import("../src/gba-session.js");
   const session = playingSession();
   const removed = [];
-  const result = teardownSession(session, {
+  const result = await teardownSession(session, {
     localStorage: {
       length: 1,
       key() {
@@ -465,7 +465,7 @@ test("teardown still clears the session when localStorage raises quota", async (
   assert.equal(plan.ok, false);
   assert.equal(plan.error, "Please select a .gba file first");
 
-  const legacy = teardownSession(createRomSession(), {
+  const legacy = await teardownSession(createRomSession(), {
     localStorage: {
       removeItem() {
         const error = new Error("quota");
@@ -481,7 +481,7 @@ test("teardown still clears the session when localStorage raises quota", async (
 test("teardown still clears the session when localStorage and IndexedDB are unavailable", async () => {
   const { teardownSession } = await import("../src/gba-session.js");
   const session = playingSession();
-  const result = teardownSession(session, { localStorage: null, indexedDB: null });
+  const result = await teardownSession(session, { localStorage: null, indexedDB: null });
   assert.equal(result.ok, false);
   assert.equal(result.revokeUrl, "blob:live");
   assert.equal(result.storageError, "Could not clear saved data because storage is unavailable.");
@@ -490,7 +490,7 @@ test("teardown still clears the session when localStorage and IndexedDB are unav
   assert.equal(session.fileName, null);
 
   let deleted = null;
-  const denied = teardownSession(playingSession(), {
+  const denied = await teardownSession(playingSession(), {
     indexedDB: {
       deleteDatabase(name) {
         deleted = name;
@@ -512,7 +512,7 @@ test("teardown still asks IndexedDB to delete when localStorage quota fails firs
   let deleted = 0;
   const quota = new Error("quota");
   quota.name = "QuotaExceededError";
-  const result = teardownSession(session, {
+  const result = await teardownSession(session, {
     localStorage: {
       removeItem() {
         throw quota;
@@ -533,11 +533,72 @@ test("teardown still asks IndexedDB to delete when localStorage quota fails firs
   assert.equal(session.activeUrl, null);
 });
 
+test("clearing local saves continues after the first removeItem throws", async () => {
+  const { teardownSession } = await import("../src/gba-session.js");
+  const session = playingSession();
+  const removed = [];
+  const result = await teardownSession(session, {
+    localStorage: {
+      length: 2,
+      key(index) {
+        return ["gba-rom-session:1:1", "gba-rom-session:2:2"][index];
+      },
+      removeItem(key) {
+        removed.push(key);
+        if (key === "gba-rom-session") throw quotaError();
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.storageError, "Could not clear saved data because storage is full.");
+  assert.equal(result.revokeUrl, "blob:live");
+  assert.deepEqual(removed, [
+    "gba-rom-session",
+    "gba-rom-session:1:1",
+    "gba-rom-session:2:2",
+  ]);
+  assert.equal(session.bytes, null);
+  assert.equal(session.activeUrl, null);
+});
+
+test("an IndexedDB delete that fails asynchronously is not a successful teardown", async () => {
+  const { teardownSession } = await import("../src/gba-session.js");
+  const session = playingSession();
+  const failure = new Error("delete failed");
+  failure.name = "UnknownError";
+  const result = await teardownSession(session, {
+    indexedDB: {
+      deleteDatabase(name) {
+        assert.equal(name, "gba-rom-session");
+        const listeners = new Map();
+        const request = {
+          readyState: "pending",
+          error: null,
+          addEventListener(type, fn) {
+            listeners.set(type, fn);
+          },
+        };
+        queueMicrotask(() => {
+          request.readyState = "done";
+          request.error = failure;
+          listeners.get("error")();
+        });
+        return request;
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.storageError, "Could not clear saved data because storage is unavailable.");
+  assert.equal(result.revokeUrl, "blob:live");
+  assert.equal(session.bytes, null);
+  assert.equal(session.activeUrl, null);
+});
+
 test("teardown ignores a ROM read that finishes after the session is cleared", async () => {
   const { teardownSession } = await import("../src/gba-session.js");
   const session = createRomSession();
   const generation = beginFileRead(session, "late.gba");
-  const ended = teardownSession(session, {});
+  const ended = await teardownSession(session, {});
   assert.equal(ended.ok, true);
   assert.equal(ended.revokeUrl, null);
   const late = finishFileRead(session, generation, makeRom());

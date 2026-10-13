@@ -55,16 +55,89 @@ function clearLocal(localStorage) {
   };
   push(STORE_NAME);
   for (const key of listKeys(localStorage)) push(key);
-  for (const key of doomed) localStorage.removeItem(key);
+  // A throw from the first key must not leave the rest of the session stored.
+  let failure = null;
+  for (const key of doomed) {
+    try {
+      localStorage.removeItem(key);
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+  }
+  if (failure) throw failure;
+}
+
+function listen(request, type, fn) {
+  if (typeof request.addEventListener === "function") {
+    request.addEventListener(type, fn);
+    return;
+  }
+  const prop = `on${type}`;
+  const previous = request[prop];
+  request[prop] = (event) => {
+    if (typeof previous === "function") previous.call(request, event);
+    fn(event);
+  };
+}
+
+function readRequestError(request) {
+  try {
+    return request && request.error ? request.error : null;
+  } catch {
+    // A pending IDBRequest throws InvalidStateError if error is read early.
+    return null;
+  }
+}
+
+function deleteFailure(request) {
+  return (
+    readRequestError(request) ||
+    Object.assign(new Error("Could not delete saved data."), { name: "UnknownError" })
+  );
+}
+
+// deleteDatabase reports failure on the request, after this call returns.
+// An error that shows up only in that later callback must not look like success.
+function watchDelete(request) {
+  if (!request || typeof request !== "object") return Promise.resolve();
+
+  const earlyError = readRequestError(request);
+  if (request.readyState === "done") {
+    return earlyError ? Promise.reject(earlyError) : Promise.resolve();
+  }
+
+  const pending =
+    request.readyState === "pending" ||
+    typeof request.addEventListener === "function" ||
+    "onerror" in request ||
+    "onsuccess" in request ||
+    "onblocked" in request;
+  if (!pending) return earlyError ? Promise.reject(earlyError) : Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve();
+    };
+    const fail = (event) => {
+      if (event && typeof event.preventDefault === "function") event.preventDefault();
+      finish(deleteFailure(request));
+    };
+    listen(request, "success", () => finish(null));
+    listen(request, "error", fail);
+    listen(request, "blocked", fail);
+  });
 }
 
 function clearIndexedDb(indexedDB) {
   if (indexedDB == null || typeof indexedDB.deleteDatabase !== "function") unavailable();
-  const request = indexedDB.deleteDatabase(STORE_NAME);
-  if (request && request.error) throw request.error;
+  return watchDelete(indexedDB.deleteDatabase(STORE_NAME));
 }
 
-export function clearSessionStores(deps = {}) {
+export async function clearSessionStores(deps = {}) {
   const errors = [];
   if ("localStorage" in deps) {
     try {
@@ -75,7 +148,7 @@ export function clearSessionStores(deps = {}) {
   }
   if ("indexedDB" in deps) {
     try {
-      clearIndexedDb(deps.indexedDB);
+      await clearIndexedDb(deps.indexedDB);
     } catch (error) {
       errors.push(error);
     }

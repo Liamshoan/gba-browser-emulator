@@ -73,7 +73,8 @@ export function finishFileRead(session, generation, bytes, error) {
 
 // Drop the in-memory ROM even when browser storage throws. The caller
 // revokes revokeUrl. A file read still in flight for this generation is ignored.
-export function teardownSession(session, deps = {}) {
+// The IndexedDB delete is awaited so a request error is not reported as success.
+export async function teardownSession(session, deps = {}) {
   const revokeUrl = session.activeUrl ?? null;
   session.generation += 1;
   session.pendingName = null;
@@ -82,7 +83,7 @@ export function teardownSession(session, deps = {}) {
   session.activeUrl = null;
   session.readError = null;
 
-  const errors = clearSessionStores(deps);
+  const errors = await clearSessionStores(deps);
   const storageError = errors.length ? clearStorageFailure(errors[0]) : null;
   return { ok: storageError === null, revokeUrl, storageError };
 }
